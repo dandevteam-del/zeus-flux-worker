@@ -34,8 +34,11 @@ def _load():
     for attempt in range(3):
         try:
             p = FluxPipeline.from_pretrained(MODEL, torch_dtype=torch.bfloat16)
-            p.to("cuda")
-            p.enable_attention_slicing()
+            # FLUX (transformer + T5-XXL + VAE) exceeds 24GB if fully on GPU.
+            # CPU offload streams components to the GPU as needed → fits a 24GB card.
+            p.enable_model_cpu_offload()
+            p.vae.enable_slicing()
+            p.vae.enable_tiling()
             _pipe = p
             return _pipe
         except Exception as e:
