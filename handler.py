@@ -29,26 +29,36 @@ def _df(path):
 
 
 def _free_volume():
-    """Earlier failed FLUX attempts left ~33GB of dead downloads PLUS a large
-    Xet partial-download cache on the 50GB volume. `_free_volume` removes
-    everything under the HF cache except a fully-present SDXL, so the ~7GB
-    SDXL download always fits. Also clears the Xet cache (the real space hog)."""
+    """The 50GB volume kept ending up full of dead FLUX downloads + Xet partials
+    that surgical deletes missed. Decisive fix: if free space is low, NUKE the
+    entire HF cache and re-download SDXL clean (~7GB, ~1 min). The volume holds
+    nothing precious — it's a model-download scratch cache."""
     import shutil
     root = "/runpod-volume/hf"
-    print(f"[free] before: {_df('/runpod-volume'):.1f}GB free on /runpod-volume", flush=True)
-    # 1. Xet cache — partial/incomplete downloads from the FLUX Xet attempts.
-    for xet in (os.path.join(root, "xet"), os.path.join(root, "hub", "xet")):
-        if os.path.isdir(xet):
-            shutil.rmtree(xet, ignore_errors=True)
-    # 2. Any model cache that isn't SDXL (dead FLUX, etc.).
+    free = _df("/runpod-volume")
+    print(f"[free] before: {free:.1f}GB free on /runpod-volume", flush=True)
+    # List what's eating the volume (debug — visible in worker logs).
+    for base in ("/runpod-volume", root, os.path.join(root, "hub")):
+        if os.path.isdir(base):
+            try:
+                print(f"[free] {base}: {os.listdir(base)}", flush=True)
+            except Exception:
+                pass
+    sdxl_ok = False
     hub = os.path.join(root, "hub")
     if os.path.isdir(hub):
         for d in os.listdir(hub):
-            full = os.path.join(hub, d)
-            if d.startswith("models--") and "stable-diffusion-xl" not in d:
-                shutil.rmtree(full, ignore_errors=True)
-            elif d in (".locks", "tmp") or d.startswith("tmp"):
-                shutil.rmtree(full, ignore_errors=True)
+            if "stable-diffusion-xl" in d:
+                # crude completeness check: snapshot dir has the big unet weight
+                snap = os.path.join(hub, d, "snapshots")
+                sdxl_ok = os.path.isdir(snap) and any(
+                    os.path.exists(os.path.join(snap, s, "unet", "diffusion_pytorch_model.fp16.safetensors"))
+                    for s in (os.listdir(snap) if os.path.isdir(snap) else []))
+    # Wipe everything unless a complete SDXL is already cached AND we have room.
+    if not (sdxl_ok and free > 8):
+        print("[free] wiping entire HF cache for a clean SDXL download", flush=True)
+        shutil.rmtree(root, ignore_errors=True)
+        os.makedirs(hub, exist_ok=True)
     print(f"[free] after:  {_df('/runpod-volume'):.1f}GB free on /runpod-volume", flush=True)
 
 
