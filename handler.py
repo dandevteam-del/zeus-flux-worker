@@ -19,12 +19,25 @@ MODEL = os.environ.get("SDXL_MODEL", "stabilityai/stable-diffusion-xl-base-1.0")
 _pipe = None
 
 
+def _free_volume():
+    """The volume accumulated ~33GB of dead FLUX downloads from earlier failed
+    attempts — wipe stale model caches so SDXL's ~7GB fits."""
+    import shutil
+    hub = "/runpod-volume/hf/hub"
+    if not os.path.isdir(hub):
+        return
+    for d in os.listdir(hub):
+        if d.startswith("models--") and "stable-diffusion-xl" not in d:
+            shutil.rmtree(os.path.join(hub, d), ignore_errors=True)
+
+
 def _load():
     global _pipe
     if _pipe is not None:
         return _pipe
     import torch
     from diffusers import StableDiffusionXLPipeline
+    _free_volume()
     last = None
     for attempt in range(3):
         try:
