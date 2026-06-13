@@ -24,16 +24,19 @@ MODEL = os.environ.get("FLUX_MODEL", "black-forest-labs/FLUX.1-schnell")
 _pipe = None
 
 
-def _load():
+def _load(hf_token: str | None = None):
     global _pipe
     if _pipe is not None:
         return _pipe
     import torch
     from diffusers import FluxPipeline
+    # FLUX.1-schnell is gated; the token (passed per-request, never baked) is used
+    # only for the first download, then the model is cached on the network volume.
+    token = hf_token or os.environ.get("HF_TOKEN")
     last = None
     for attempt in range(3):
         try:
-            p = FluxPipeline.from_pretrained(MODEL, torch_dtype=torch.bfloat16)
+            p = FluxPipeline.from_pretrained(MODEL, torch_dtype=torch.bfloat16, token=token)
             # FLUX (transformer + T5-XXL + VAE) exceeds 24GB if fully on GPU.
             # CPU offload streams components to the GPU as needed → fits a 24GB card.
             p.enable_model_cpu_offload()
@@ -54,7 +57,7 @@ def handler(event):
         return {"error": "prompt is required"}
     import torch
     try:
-        pipe = _load()
+        pipe = _load(inp.get("hf_token"))
     except Exception as e:
         return {"error": f"model unavailable: {e}"}
     g = torch.Generator("cuda").manual_seed(int(inp.get("seed", 0)))
