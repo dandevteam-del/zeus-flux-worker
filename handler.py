@@ -19,16 +19,37 @@ MODEL = os.environ.get("SDXL_MODEL", "stabilityai/stable-diffusion-xl-base-1.0")
 _pipe = None
 
 
+def _df(path):
+    """Free GB on the filesystem holding `path` (0 if it doesn't exist)."""
+    try:
+        st = os.statvfs(path)
+        return st.f_bavail * st.f_frsize / 1e9
+    except Exception:
+        return 0.0
+
+
 def _free_volume():
-    """The volume accumulated ~33GB of dead FLUX downloads from earlier failed
-    attempts — wipe stale model caches so SDXL's ~7GB fits."""
+    """Earlier failed FLUX attempts left ~33GB of dead downloads PLUS a large
+    Xet partial-download cache on the 50GB volume. `_free_volume` removes
+    everything under the HF cache except a fully-present SDXL, so the ~7GB
+    SDXL download always fits. Also clears the Xet cache (the real space hog)."""
     import shutil
-    hub = "/runpod-volume/hf/hub"
-    if not os.path.isdir(hub):
-        return
-    for d in os.listdir(hub):
-        if d.startswith("models--") and "stable-diffusion-xl" not in d:
-            shutil.rmtree(os.path.join(hub, d), ignore_errors=True)
+    root = "/runpod-volume/hf"
+    print(f"[free] before: {_df('/runpod-volume'):.1f}GB free on /runpod-volume", flush=True)
+    # 1. Xet cache — partial/incomplete downloads from the FLUX Xet attempts.
+    for xet in (os.path.join(root, "xet"), os.path.join(root, "hub", "xet")):
+        if os.path.isdir(xet):
+            shutil.rmtree(xet, ignore_errors=True)
+    # 2. Any model cache that isn't SDXL (dead FLUX, etc.).
+    hub = os.path.join(root, "hub")
+    if os.path.isdir(hub):
+        for d in os.listdir(hub):
+            full = os.path.join(hub, d)
+            if d.startswith("models--") and "stable-diffusion-xl" not in d:
+                shutil.rmtree(full, ignore_errors=True)
+            elif d in (".locks", "tmp") or d.startswith("tmp"):
+                shutil.rmtree(full, ignore_errors=True)
+    print(f"[free] after:  {_df('/runpod-volume'):.1f}GB free on /runpod-volume", flush=True)
 
 
 def _load():
